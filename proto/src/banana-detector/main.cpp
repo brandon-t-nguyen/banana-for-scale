@@ -1,101 +1,139 @@
+#include <iostream>
+#include <cstdio>
+#include <cstring>
+
 #include "opencv2/objdetect.hpp"
 #include "opencv2/highgui.hpp"
 #include "opencv2/imgproc.hpp"
 
-#include <stdio.h>
-
-using namespace std;
-using namespace cv;
 // https://docs.opencv.org/3.0-beta/doc/tutorials/objdetect/cascade_classifier/cascade_classifier.html
-/** Function Headers */
-void detectAndDisplay( Mat frame );
 
-/** Global variables */
-String face_cascade_name, eyes_cascade_name;
-CascadeClassifier face_cascade;
-CascadeClassifier eyes_cascade;
-String window_name = "Capture - Face detection";
-
-/** @function main */
-int main( int argc, const char** argv )
+#define in_range(val,lo,hi) (lo <= val && val <= hi)
+static
+void display(const std::vector<cv::Rect> & feats, const cv::Mat & base_image)
 {
-    CommandLineParser parser(argc, argv,
-        "{help h||}"
-        "{face_cascade|../../data/haarcascades/haarcascade_frontalface_alt.xml|}"
-        "{eyes_cascade|../../data/haarcascades/haarcascade_eye_tree_eyeglasses.xml|}");
-
-    parser.about( "\nThis program demonstrates using the cv::CascadeClassifier class to detect objects (Face + eyes) in a video stream.\n"
-                  "You can use Haar or LBP features.\n\n" );
-    parser.printMessage();
-
-    face_cascade_name = parser.get<String>("face_cascade");
-    eyes_cascade_name = parser.get<String>("eyes_cascade");
-
-    face_cascade_name = "data/haarcascade_frontalface_alt.xml";
-    eyes_cascade_name = "data/haarcascade_eye_tree_eyeglasses.xml";
-
-    VideoCapture capture;
-    Mat frame;
-
-    //-- 1. Load the cascades
-    if( !face_cascade.load( face_cascade_name ) ){ printf("--(!)Error loading face cascade\n"); return -1; };
-    if( !eyes_cascade.load( eyes_cascade_name ) ){ printf("--(!)Error loading eyes cascade\n"); return -1; };
-
-    //-- 2. Read the video stream
-    /*
-    capture.open( 0 );
-    if ( ! capture.isOpened() ) { printf("--(!)Error opening video capture\n"); return -1; }
-
-    while ( capture.read(frame) )
+    cv::Mat image = base_image.clone();
+    for ( size_t i = 0; i < feats.size(); i++ )
     {
-        if( frame.empty() )
-        {
-            printf(" --(!) No captured frame -- Break!");
-            break;
+        //std::cout << feats[i] << std::endl;
+
+        cv::Mat banana_roi = base_image(feats[i]);
+        cv::Scalar avg = cv::mean(banana_roi);
+
+        cv::Mat3f avg_mat(cv::Vec3f(avg[0], avg[1], avg[2]));
+        cv::Mat3f hsv_mat;
+
+        cv::cvtColor(avg_mat, hsv_mat, cv::COLOR_RGB2HSV);
+        cv::Scalar hsv = cv::mean(hsv_mat);
+
+        cv::rectangle(image, feats[i], cv::Scalar(255, 0, 255), 1, 8, 0);
+        /*
+        if (in_range(avg[2]/avg[1], 1.116 - .2, 1.116 + .2) &&
+            in_range(avg[2]/avg[0], 2.172 + .1, 10)) {
+            cv::rectangle(image, feats[i], cv::Scalar(0, 255, 0), 1, 8, 0);
+            std::cout << feats[i] << std::endl;
+            std::cout << hsv << std::endl << std::endl;
         }
-
-        //-- 3. Apply the classifier to the frame
-        detectAndDisplay( frame );
-
-        if( waitKey(10) == 27 ) { break; } // escape
+        */
+        ///*
+        #define H_CENTER    195
+        #define H_RANGE     5
+        #define S_CENTER    0.75
+        #define S_RANGE     0.15
+        #define V_CENTER    140
+        #define V_RANGE     15
+        if (in_range(hsv[0], H_CENTER-H_RANGE, H_CENTER+H_RANGE) &&
+            in_range(hsv[1], S_CENTER-S_RANGE, S_CENTER+S_RANGE) &&
+            in_range(hsv[2], V_CENTER-V_RANGE, V_CENTER+V_RANGE)) {
+            cv::rectangle(image, feats[i], cv::Scalar(0, 255, 0), 1, 8, 0);
+        }
+        //*/
     }
-    */
-    frame = cv::imread("data/face.jpg", IMREAD_COLOR);
-    detectAndDisplay( frame );
-    waitKey(0);
-    return 0;
+    //cv::resize(image, image, cv::Size(image.rows/10, image.cols/10));
+    cv::imshow("banana", image);
 }
 
-/** @function detectAndDisplay */
-void detectAndDisplay( Mat frame )
+static
+std::vector<cv::Rect> detect(cv::CascadeClassifier & cascade, const cv::Mat & image)
 {
-    std::vector<Rect> faces;
-    Mat frame_gray;
+    std::vector<cv::Rect> feats;
+    cv::Mat gray;
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    cv::equalizeHist(gray, gray);
 
-    cvtColor( frame, frame_gray, COLOR_BGR2GRAY );
-    equalizeHist( frame_gray, frame_gray );
+    // detect them
+    cascade.detectMultiScale(gray, feats, 1.1, 1, cv::CASCADE_SCALE_IMAGE, cv::Size(60, 60));
 
-    //-- Detect faces
-    face_cascade.detectMultiScale( frame_gray, faces, 1.1, 2, 0|CASCADE_SCALE_IMAGE, Size(60, 60) );
+    /*
+    for (int i = feats.size() - 1; i >= 0; --i) {
 
-    for ( size_t i = 0; i < faces.size(); i++ )
-    {
-        Point center( faces[i].x + faces[i].width/2, faces[i].y + faces[i].height/2 );
-        ellipse( frame, center, Size( faces[i].width/2, faces[i].height/2 ), 0, 0, 360, Scalar( 255, 0, 255 ), 4, 8, 0 );
+        cv::Mat banana_roi = image(feats[i]);
+        cv::Scalar avg = cv::mean(banana_roi);
 
-        Mat faceROI = frame_gray( faces[i] );
-        std::vector<Rect> eyes;
+        cv::Mat3f avg_mat(cv::Vec3f(avg[0], avg[1], avg[2]));
+        cv::Mat3f hsv_mat;
 
-        //-- In each face, detect eyes
-        eyes_cascade.detectMultiScale( faceROI, eyes, 1.1, 2, 0 |CASCADE_SCALE_IMAGE, Size(30, 30) );
+        cv::cvtColor(avg_mat, hsv_mat, cv::COLOR_RGB2HSV);
+        cv::Scalar hsv = cv::mean(hsv_mat);
 
-        for ( size_t j = 0; j < eyes.size(); j++ )
-        {
-            Point eye_center( faces[i].x + eyes[j].x + eyes[j].width/2, faces[i].y + eyes[j].y + eyes[j].height/2 );
-            int radius = cvRound( (eyes[j].width + eyes[j].height)*0.25 );
-            circle( frame, eye_center, radius, Scalar( 255, 0, 0 ), 4, 8, 0 );
+        #define H_CENTER    195
+        #define H_RANGE     5
+        #define S_CENTER    0.75
+        #define S_RANGE     0.15
+        #define V_CENTER    140
+        #define V_RANGE     15
+        if (in_range(hsv[0], H_CENTER-H_RANGE, H_CENTER+H_RANGE) &&
+            in_range(hsv[1], S_CENTER-S_RANGE, S_CENTER+S_RANGE) &&
+            in_range(hsv[2], V_CENTER-V_RANGE, V_CENTER+V_RANGE)) {
+        } else {
+            feats.pop_back();
         }
     }
-    //-- Show what you got
-    imshow( window_name, frame );
+    */
+
+    return feats;
+}
+
+// banana-detector <image path>
+int main(int argc, char * argv[])
+{
+
+    if (argc <= 1) {
+        std::cerr << "Please provide image" << std::endl;
+        std::cerr << "banana-detector <image path>" << std::endl;
+        return -1;
+    }
+
+    cv::Mat image;
+    cv::CascadeClassifier banana_cascade;
+
+    if(!banana_cascade.load("data/haar_banana_cascade.xml")) {
+    //if(!banana_cascade.load("data/banana1.xml")) {
+        std::cerr << "Error loading face cascade\n" << std::endl;
+        return -1;
+    };
+
+    const char *  filepath = argv[1];
+    int len = strlen(filepath);
+    bool still = true;
+    if (!strcmp(".mp4", &filepath[len-4])) {
+        still = false;
+    }
+
+    if (still) {
+        image = cv::imread(filepath, cv::IMREAD_COLOR);
+        //cv::resize(image, image, cv::Size(300,150));
+        std::vector<cv::Rect> bananas = detect(banana_cascade, image);
+        display(bananas, image);
+        cv::waitKey(0);
+    } else {
+        cv::VideoCapture cap(filepath);
+        while(cap.isOpened()) {
+            cap >> image;
+            std::vector<cv::Rect> bananas = detect(banana_cascade, image);
+            display(bananas, image);
+            cv::waitKey(30);
+        }
+    }
+    return 0;
 }
